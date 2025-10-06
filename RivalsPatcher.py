@@ -1,19 +1,79 @@
 #!/usr/bin/env python3
 import os
 import sys
+import subprocess
+import time
+from pathlib import Path
+
+# ---------------------------
+# Auto-install required pip packages if missing
+# ---------------------------
+REQUIRED_PACKAGES = [
+    ("colorama", "colorama"),
+    ("requests", "requests"),
+    ("keyboard", "keyboard"),
+    ("pywin32", "pywin32"),
+]
+
+def ensure_packages(packages):
+    """
+    packages: list of tuples (import_name, pip_name)
+    """
+    to_install = []
+    for import_name, pip_name in packages:
+        try:
+            __import__(import_name)
+        except Exception:
+            to_install.append((import_name, pip_name))
+
+    if not to_install:
+        return True
+
+    print(f"[+] Missing packages detected: {', '.join(p for _, p in to_install)}")
+    print("[+] Installing missing packages via pip (this may require internet)...")
+
+    for import_name, pip_name in to_install:
+        try:
+            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", pip_name]
+            print(f"    -> Installing {pip_name} ...")
+            subprocess.check_call(cmd)
+            # try re-import
+            __import__(import_name)
+            print(f"    -> {pip_name} installed.")
+        except Exception as e:
+            print(f"    !! Failed to install {pip_name}: {e}")
+            resp = input("Continue without this package? (y/n) ").strip().lower()
+            if resp not in ("y", "yes"):
+                print("Aborting due to missing dependency.")
+                sys.exit(1)
+
+    # pywin32 postinstall attempt (best-effort)
+    try:
+        import win32api  # noqa: F401
+    except Exception:
+        # if pywin32 was installed but postinstall not run, try to run it
+        try:
+            subprocess.check_call([sys.executable, "-m", "pywin32_postinstall", "-install"])
+        except Exception:
+            pass
+
+    return True
+
+# Ensure required packages before importing them
+ensure_packages(REQUIRED_PACKAGES)
+
+# ---------------------------
+# Now import everything safely
+# ---------------------------
 import zipfile
 import tempfile
-import subprocess
 from colorama import Fore, Style, init
 import shutil
-import time
 import getpass
 import itertools
-from pathlib import Path
-from datetime import datetime
 import ctypes
 
-# Colorama init
+# initialize colorama
 init(autoreset=True)
 
 # --- Palette "hack" ---
@@ -188,7 +248,6 @@ def patch_custom_sky(target_version: Path):
 
         print(ACCENT + "\nAvailable skyboxes:")
         for i, d in enumerate(sky_dirs, start=1):
-            # count image files for small preview (optional)
             imgs = len(list(d.rglob('*.*')))
             print(NEON + f"[{i}] {d.name} " + INFO + f"({imgs} files)")
 
@@ -203,9 +262,7 @@ def patch_custom_sky(target_version: Path):
 
         selected = sky_dirs[choice_num - 1]
         target_sky_dir = target_version / 'PlatformContent' / 'pc' / 'textures' / 'sky'
-        # OPTIONAL: clear previous sky folder to avoid leftovers
         if target_sky_dir.exists():
-            # remove everything inside (keep folder)
             for child in target_sky_dir.iterdir():
                 if child.is_dir():
                     shutil.rmtree(child, ignore_errors=True)
@@ -248,7 +305,6 @@ def main():
     # if user declines main patch, still offer sky
     if choice not in ('y', 'yes'):
         print(WARN + "Main patch skipped.")
-        # attempt to locate installed Bloxstrap version for sky patch (best-effort)
         local_appdata = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
         try:
             latest_version = find_bloxstrap_versions(local_appdata)
